@@ -82,51 +82,60 @@ const DB_NAME = 'PayrollAnalyticsDB';
 const DB_STORE = 'files';
 let dbPromise = null;
 
+let storageAvailable = null; // null = لم يُختبر بعد، true/false بعد الاختبار
+
 function openDB() {
   if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve, reject) => {
-    if (!('indexedDB' in window)) { resolve(null); return; }
-    const req = indexedDB.open(DB_NAME, 1);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE, { keyPath: 'id' });
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => resolve(null); // تجاهل بصمت إن كان التخزين غير متاح (مثل وضع التصفح الخاص)
+  dbPromise = new Promise((resolve) => {
+    try {
+      if (!('indexedDB' in window) || !window.indexedDB) { resolve(null); return; }
+      const req = indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE, { keyPath: 'id' });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null); // تجاهل بهدوء إن كان التخزين غير متاح (مثل وضع التصفح الخاص)
+      req.onblocked = () => resolve(null);
+    } catch (e) {
+      resolve(null); // بعض المتصفحات/السياقات ترمي استثناءً مباشرة عند استدعاء indexedDB.open
+    }
   });
   return dbPromise;
 }
 
 async function dbPutFile(entry) {
-  const db = await openDB();
-  if (!db) return;
   try {
+    const db = await openDB();
+    if (!db) return false;
     await new Promise((resolve, reject) => {
       const tx = db.transaction(DB_STORE, 'readwrite');
       tx.objectStore(DB_STORE).put(entry);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
     });
-  } catch (e) { /* تجاهل بصمت */ }
+    return true;
+  } catch (e) { return false; }
 }
 
 async function dbDeleteFile(id) {
-  const db = await openDB();
-  if (!db) return;
   try {
+    const db = await openDB();
+    if (!db) return;
     await new Promise((resolve, reject) => {
       const tx = db.transaction(DB_STORE, 'readwrite');
       tx.objectStore(DB_STORE).delete(id);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
-  } catch (e) { /* تجاهل بصمت */ }
+  } catch (e) { /* تجاهل بهدوء */ }
 }
 
 async function dbGetAllFiles() {
-  const db = await openDB();
-  if (!db) return [];
   try {
+    const db = await openDB();
+    if (!db) return [];
     return await new Promise((resolve, reject) => {
       const tx = db.transaction(DB_STORE, 'readonly');
       const req = tx.objectStore(DB_STORE).getAll();
@@ -137,16 +146,36 @@ async function dbGetAllFiles() {
 }
 
 async function dbClearAll() {
-  const db = await openDB();
-  if (!db) return;
   try {
+    const db = await openDB();
+    if (!db) return;
     await new Promise((resolve, reject) => {
       const tx = db.transaction(DB_STORE, 'readwrite');
       tx.objectStore(DB_STORE).clear();
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
-  } catch (e) { /* تجاهل بصمت */ }
+  } catch (e) { /* تجاهل بهدوء */ }
+}
+
+/* اختبار فعلي (كتابة ثم قراءة ثم حذف) للتأكد أن الحفظ الدائم يعمل فعلًا في هذا المتصفح/السياق الحالي،
+   بدل افتراض نجاحه. يُستدعى مرة واحدة عند تحميل الصفحة. */
+async function testStorageAvailability() {
+  const testId = '__storage_test__';
+  const ok = await dbPutFile({ id: testId, __test: true });
+  if (ok) {
+    await dbDeleteFile(testId);
+  }
+  storageAvailable = ok;
+  if (!ok) {
+    showAlert('warn',
+      'تعذّر تفعيل الحفظ الدائم للملفات في هذا المتصفح، لذا لن تبقى الملفات محفوظة بعد تحديث الصفحة (سيتوجب رفعها من جديد كل مرة). ' +
+      'الأسباب الشائعة: (1) فتح الأداة مباشرة من داخل الملف المضغوط (ZIP) دون فك الضغط أولًا — تأكد من فك الضغط الكامل ثم افتح index.html من المجلد الناتج. ' +
+      '(2) استخدام وضع التصفح الخاص/incognito. (3) إعداد في المتصفح يمسح بيانات المواقع تلقائيًا عند الإغلاق.',
+      true
+    );
+  }
+  return ok;
 }
 
 /* مفتاح ثابت لكل (جهة + شهر) بحيث يستبدل رفع نفس الشهر لنفس الجهة الملف القديم بدل تكراره */
@@ -367,21 +396,25 @@ async function clearAllSavedData() {
 }
 
 async function restoreSavedFiles() {
-  const saved = await dbGetAllFiles();
+  const saved = (await dbGetAllFiles()).filter(f => !f.__test);
   if (!saved.length) return;
   state.files = saved.map(f => ({ ...f, status: 'ok' }));
   renderFileList();
   rebuildApp();
   showAlert('info', `تم استرجاع ${saved.length} ملف محفوظ من الجلسة السابقة داخل هذا المتصفح.`);
 }
-restoreSavedFiles();
 
-function showAlert(type, msg) {
+(async () => {
+  await testStorageAvailability();
+  await restoreSavedFiles();
+})();
+
+function showAlert(type, msg, persistent) {
   const div = document.createElement('div');
   div.className = `alert ${type}`;
   div.innerHTML = `<span>${type === 'danger' ? '⛔' : type === 'warn' ? '⚠️' : 'ℹ️'}</span><span>${msg}</span>`;
   alertsBox.appendChild(div);
-  setTimeout(() => div.remove(), 9000);
+  if (!persistent) setTimeout(() => div.remove(), 9000);
 }
 
 function renderFileList() {
