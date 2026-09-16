@@ -75,6 +75,85 @@ const state = {
 
 const fmt = (n) => Math.round(n || 0).toLocaleString('en-US');
 
+/* ---------- تخزين دائم داخل المتصفح (IndexedDB) — لتبقى الملفات محفوظة بعد تحديث الصفحة ----------
+   يُخزَّن هنا الملف بعد تحليله فقط (بيانات الموظفين المستخرجة)، وليس الملف الخام.
+   كل شيء يبقى داخل متصفحك فقط ولا يُرسل لأي خادم. ---------- */
+const DB_NAME = 'PayrollAnalyticsDB';
+const DB_STORE = 'files';
+let dbPromise = null;
+
+function openDB() {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) { resolve(null); return; }
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) db.createObjectStore(DB_STORE, { keyPath: 'id' });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => resolve(null); // تجاهل بصمت إن كان التخزين غير متاح (مثل وضع التصفح الخاص)
+  });
+  return dbPromise;
+}
+
+async function dbPutFile(entry) {
+  const db = await openDB();
+  if (!db) return;
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).put(entry);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* تجاهل بصمت */ }
+}
+
+async function dbDeleteFile(id) {
+  const db = await openDB();
+  if (!db) return;
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).delete(id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* تجاهل بصمت */ }
+}
+
+async function dbGetAllFiles() {
+  const db = await openDB();
+  if (!db) return [];
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readonly');
+      const req = tx.objectStore(DB_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) { return []; }
+}
+
+async function dbClearAll() {
+  const db = await openDB();
+  if (!db) return;
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (e) { /* تجاهل بصمت */ }
+}
+
+/* مفتاح ثابت لكل (جهة + شهر) بحيث يستبدل رفع نفس الشهر لنفس الجهة الملف القديم بدل تكراره */
+function fileKey(entity, monthKey, fileName) {
+  return `${entity}||${monthKey || fileName}`;
+}
+
 function normHeader(h) {
   return String(h || '').trim().toLowerCase().replace(/\s+/g, ' ');
 }
@@ -239,14 +318,28 @@ async function handleFiles(fileListObj) {
     showAlert('danger', `تم تجاهل ${rejected.length} ملف لأن صيغته غير مدعومة (يجب أن يكون xlsx أو xls): ${rejected.map(f=>f.name).join('، ')}`);
   }
   for (const file of valid) {
-    const id = `${file.name}-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
-    const entry = { id, fileName: file.name, status: 'loading' };
+    const tempId = `${file.name}-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2,7)}`;
+    const entry = { id: tempId, fileName: file.name, status: 'loading' };
     state.files.push(entry);
     renderFileList();
     try {
       const rows = await readFileAsRows(file);
       const parsed = parseWorkbookRows(rows, file.name);
       Object.assign(entry, parsed, { status: parsed.error ? 'error' : 'ok' });
+      if (!parsed.error) {
+        const key = fileKey(parsed.entity, parsed.monthKey, file.name);
+        // إن كان هناك ملف سابق بنفس (الجهة + الشهر) يُستبدل بدل تكراره
+        const dupIndex = state.files.findIndex(f => f.id !== tempId && f.dbKey === key);
+        if (dupIndex !== -1) {
+          const dup = state.files[dupIndex];
+          showAlert('info', `تم استبدال ملف "${dup.fileName}" (نفس الجهة والشهر) بالملف الجديد "${file.name}".`);
+          state.files.splice(dupIndex, 1);
+          await dbDeleteFile(key);
+        }
+        entry.id = key;
+        entry.dbKey = key;
+        await dbPutFile(entry);
+      }
     } catch (err) {
       entry.status = 'error';
       entry.error = 'تعذّر فتح الملف — تأكد أن الملف غير تالف وأنه بصيغة إكسل صحيحة.';
@@ -258,10 +351,30 @@ async function handleFiles(fileListObj) {
 }
 
 function removeFile(id) {
+  const entry = state.files.find(f => f.id === id);
   state.files = state.files.filter(f => f.id !== id);
+  if (entry && entry.dbKey) dbDeleteFile(entry.dbKey);
   renderFileList();
   rebuildApp();
 }
+
+async function clearAllSavedData() {
+  if (!confirm('سيتم حذف كل الملفات المحفوظة داخل هذا المتصفح نهائيًا. هل تريد المتابعة؟')) return;
+  state.files = [];
+  await dbClearAll();
+  renderFileList();
+  rebuildApp();
+}
+
+async function restoreSavedFiles() {
+  const saved = await dbGetAllFiles();
+  if (!saved.length) return;
+  state.files = saved.map(f => ({ ...f, status: 'ok' }));
+  renderFileList();
+  rebuildApp();
+  showAlert('info', `تم استرجاع ${saved.length} ملف محفوظ من الجلسة السابقة داخل هذا المتصفح.`);
+}
+restoreSavedFiles();
 
 function showAlert(type, msg) {
   const div = document.createElement('div');
