@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>تحليل تكاليف الرواتب | العجيمي الصناعية</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<style>
+  :root{
+    --dark-green:#123A1B;
+    --bright-green:#4EA72E;
+    --gold:#C9A227;
+    --bg:#F4F6F4;
+    --card:#FFFFFF;
+    --border:#E1E6E1;
+    --text:#1C231D;
+    --muted:#6B756C;
+    --danger:#B3261E;
+    --warn:#8A6D00;
+    --warn-bg:#FFF6DD;
+    --danger-bg:#FCEBEA;
+    --ok-bg:#EAF7EA;
+    --radius:14px;
+    --shadow:0 2px 10px rgba(18,58,27,.07);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:'Cairo',sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    min-height:100vh;
+    direction:rtl;
+  }
+  header.topbar{
+    background:linear-gradient(90deg,var(--dark-green),#1c5228);
+    color:#fff;
+    padding:22px 28px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap:12px;
+    box-shadow:var(--shadow);
+  }
+  header.topbar h1{
+    margin:0;
+    font-size:22px;
+    font-weight:800;
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  header.topbar .badge{
+    background:var(--gold);
+    color:#3a2e00;
+    font-size:12px;
+    font-weight:700;
+    padding:4px 10px;
+    border-radius:999px;
+  }
+  header.topbar .sub{
+    font-size:13px;
+    opacity:.85;
+    margin-top:4px;
+  }
+  main{
+    max-width:1320px;
+    margin:0 auto;
+    padding:24px 20px 60px;
+  }
+  .card{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    box-shadow:var(--shadow);
+    padding:20px;
+    margin-bottom:20px;
+  }
+  .card h2{
+    margin:0 0 14px;
+    font-size:17px;
+    font-weight:800;
+    color:var(--dark-green);
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .card h2 .count{
+    font-size:12px;
+    font-weight:600;
+    color:var(--muted);
+  }
+  /* Upload zone */
+  #dropzone{
+    border:2px dashed #9db99f;
+    border-radius:var(--radius);
+    padding:34px 20px;
+    text-align:center;
+    cursor:pointer;
+    background:#FAFCFA;
+    transition:.15s;
+  }
+  #dropzone.drag{
+    background:var(--ok-bg);
+    border-color:var(--bright-green);
+  }
+  #dropzone .icon{font-size:34px;margin-bottom:8px;}
+  #dropzone .hint{color:var(--muted);font-size:13px;margin-top:6px;}
+  #fileInput{display:none;}
+  .btn{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    background:var(--bright-green);
+    color:#fff;
+    border:none;
+    padding:10px 18px;
+    border-radius:10px;
+    font-family:inherit;
+    font-weight:700;
+    font-size:13.5px;
+    cursor:pointer;
+    transition:.15s;
+  }
+  .btn:hover{filter:brightness(0.93);}
+  .btn.secondary{
+    background:#fff;
+    color:var(--dark-green);
+    border:1.5px solid var(--dark-green);
+  }
+  .btn.gold{background:var(--gold);color:#3a2e00;}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  .filelist{margin-top:16px;display:flex;flex-direction:column;gap:8px;}
+  .filerow{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    background:#FAFBFA;
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:9px 14px;
+    font-size:13.5px;
+  }
+  .filerow .meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .tag{
+    font-size:11.5px;
+    font-weight:700;
+    padding:2px 9px;
+    border-radius:999px;
+    background:#E7EFE8;
+    color:var(--dark-green);
+  }
+  .tag.warn{background:var(--warn-bg);color:var(--warn);}
+  .tag.ok{background:var(--ok-bg);color:#1e6b1e;}
+  .removeFile{
+    background:none;border:none;color:var(--danger);cursor:pointer;font-size:13px;font-weight:700;
+  }
+  .alert{
+    border-radius:10px;
+    padding:12px 16px;
+    font-size:13.5px;
+    margin-bottom:14px;
+    display:flex;
+    gap:10px;
+    align-items:flex-start;
+  }
+  .alert.danger{background:var(--danger-bg);color:var(--danger);border:1px solid #f3c8c5;}
+  .alert.warn{background:var(--warn-bg);color:var(--warn);border:1px solid #ecdd9a;}
+  .alert.info{background:#E8F1FB;color:#1a4d80;border:1px solid #bfd8f2;}
+  /* Tabs */
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
+  .tab{
+    padding:9px 18px;
+    border-radius:10px 10px 0 0;
+    background:#E7EFE8;
+    color:var(--dark-green);
+    font-weight:700;
+    font-size:13.5px;
+    cursor:pointer;
+    border:1px solid var(--border);
+    border-bottom:none;
+  }
+  .tab.active{background:var(--dark-green);color:#fff;}
+  /* KPI grid */
+  .kpis{
+    display:grid;
+    grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
+    gap:14px;
+    margin-bottom:20px;
+  }
+  .kpi{
+    background:var(--card);
+    border:1px solid var(--border);
+    border-radius:var(--radius);
+    padding:16px 18px;
+    box-shadow:var(--shadow);
+  }
+  .kpi .label{font-size:12.5px;color:var(--muted);font-weight:600;margin-bottom:6px;}
+  .kpi .value{font-size:22px;font-weight:800;color:var(--dark-green);}
+  .kpi .value.gold{color:#8a6d00;}
+  .kpi .sub{font-size:11.5px;color:var(--muted);margin-top:4px;}
+  /* filters row */
+  .filters{
+    display:flex;
+    align-items:center;
+    gap:16px;
+    flex-wrap:wrap;
+    margin-bottom:16px;
+  }
+  .filters .group{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .filters label.mchk{
+    display:inline-flex;align-items:center;gap:5px;
+    background:#F0F3F0;padding:5px 10px;border-radius:8px;font-size:12.5px;cursor:pointer;
+  }
+  .filters select, .filters input[type=text]{
+    font-family:inherit;
+    padding:8px 12px;
+    border-radius:8px;
+    border:1px solid var(--border);
+    font-size:13px;
+    background:#fff;
+  }
+  .toggle-metric{display:flex;border:1.5px solid var(--dark-green);border-radius:9px;overflow:hidden;}
+  .toggle-metric button{
+    border:none;background:#fff;color:var(--dark-green);padding:7px 14px;font-family:inherit;font-weight:700;font-size:12.5px;cursor:pointer;
+  }
+  .toggle-metric button.active{background:var(--dark-green);color:#fff;}
+  /* chart */
+  .chart-wrap{position:relative;height:340px;margin-bottom:6px;}
+  .grid2{display:grid;grid-template-columns:1.1fr 1fr;gap:20px;}
+  @media (max-width:900px){.grid2{grid-template-columns:1fr;}}
+  /* tables */
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  thead th{
+    text-align:right;
+    background:#EEF3EE;
+    color:var(--dark-green);
+    padding:10px 12px;
+    font-weight:800;
+    font-size:12.5px;
+    cursor:pointer;
+    white-space:nowrap;
+    position:sticky;top:0;
+  }
+  thead th.sorted::after{content:' ▾';}
+  tbody td{
+    padding:9px 12px;
+    border-bottom:1px solid var(--border);
+    white-space:nowrap;
+  }
+  tbody tr:hover{background:#FAFBF8;}
+  tbody tr.expandable{cursor:pointer;}
+  .num{font-variant-numeric:tabular-nums;}
+  .table-scroll{overflow-x:auto;max-height:520px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;}
+  .bar-cell{
+    display:flex;align-items:center;gap:8px;
+  }
+  .bar-bg{
+    flex:1;background:#EDF2ED;border-radius:6px;height:8px;overflow:hidden;min-width:60px;
+  }
+  .bar-fill{background:var(--bright-green);height:100%;border-radius:6px;}
+  .detail-row td{background:#F7FAF7;padding:14px 20px;}
+  .detail-table{font-size:12.3px;}
+  .detail-table th{background:#EEF3EE;position:static;}
+  .pager{display:flex;justify-content:center;gap:10px;margin-top:14px;align-items:center;font-size:13px;}
+  footer{
+    text-align:center;
+    color:var(--muted);
+    font-size:12.5px;
+    padding:24px 20px 40px;
+  }
+  footer .lock{color:#1e6b1e;font-weight:700;}
+  .empty-state{
+    text-align:center;
+    color:var(--muted);
+    padding:40px 10px;
+    font-size:14px;
+  }
+  .search-box{position:relative;min-width:220px;}
+  .search-box input{width:100%;padding:8px 34px 8px 12px;border-radius:8px;border:1px solid var(--border);font-family:inherit;font-size:13px;}
+  .export-row{display:flex;gap:10px;justify-content:flex-end;margin-top:12px;flex-wrap:wrap;}
+  .legend-note{font-size:11.5px;color:var(--muted);margin-top:8px;}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div>
+    <h1>📊 تحليل تكاليف الرواتب <span class="badge">Al-Ojaimi</span></h1>
+    <div class="sub">مجموعة العجيمي الصناعية — تحليل حسب الإدارة والموظف عبر الأشهر</div>
+  </div>
+</header>
+
+<main>
+
+  <section class="card">
+    <h2>1) رفع ملفات الرواتب <span class="count" id="fileCountLabel"></span></h2>
+    <div id="dropzone">
+      <div class="icon">📁</div>
+      <div><strong>اسحب وأفلت ملفات الإكسل هنا</strong> أو اضغط للاختيار</div>
+      <div class="hint">يدعم حتى 12 ملف شهري (تقرير "Employees Detailed Payroll Report") — تتم المعالجة بالكامل داخل المتصفح</div>
+      <input id="fileInput" type="file" accept=".xlsx,.xls" multiple>
+    </div>
+    <div id="alertsBox"></div>
+    <div class="filelist" id="fileList"></div>
+  </section>
+
+  <div id="appContent"></div>
+
+</main>
+
+<footer>
+  <span class="lock">🔒 خصوصية البيانات:</span> جميع ملفات الرواتب تتم معالجتها محليًا داخل متصفحك فقط — لا يتم رفع أي بيانات لأي خادم، ولا يتم حفظها في المستودع على GitHub.
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>
